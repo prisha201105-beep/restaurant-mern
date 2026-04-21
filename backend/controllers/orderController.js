@@ -1,79 +1,88 @@
-import Menu from "../models/menuModel.js";
-import {v2 as cloudinary} from "cloudinary";
+import Order from "../models/orderModel.js";
+import Cart from "../models/cartModel.js";
 
-export const addMenuItem=async(req,res)=>{
-   try {
-      const {name,description,price,category}=req.body;
-       if (!name || !description || !price || !category || !req.file) {
+export const placeOrder = async (req, res) => {
+  try {
+    const { id } = req.user;
+    const { address, paymentMethod } = req.body;
+    if (!address)
       return res
         .status(400)
-        .json({ message: "All fields are required", success: false });
-    }
-     const result=await cloudinary.uploader.upload(req.file.path);
+        .json({ message: "Delivery address is required", success: false });
 
-     const newMenuItem=await Menu.create({
-      name,description,price,category,image:result.secure_url
-     })
-       res.status(201).json({
-      message: "Menu item added",
-      success: true,
-      menuItem: newMenuItem,
+    const cart = await Cart.findOne({ user: id }).populate("items.menuItem");
+
+    if (!cart || cart.items.length === 0)
+      return res.status(400).json({ message: "Your cart is empty" });
+
+    const totalAmount = cart.items.reduce(
+      (sum, item) => sum + item.menuItem.price * item.quantity,
+      0
+    );
+
+    const newOrder = await Order.create({
+      user: id,
+      items: cart.items.map((i) => ({
+        menuItem: i.menuItem._id,
+        quantity: i.quantity,
+      })),
+      totalAmount,
+      address,
+      paymentMethod,
     });
-   } catch (error) {
-            console.log(error);
-             return res.json({message:"Internal server error",success:false})
-   }
-}
 
-export const getAllMenuItems=async(req,res)=>{
-   try {
-      const menuItems=await Menu.find().populate("category","name").sort({createdAt:-1});
-        res.status(200).json({ success: true, menuItems });
-   } catch (error) {
-      console.log(error);
-             return res.json({message:"Internal server error",success:false})
-   }
-}
+    // Clear cart
+    cart.items = [];
+    await cart.save();
 
-export const updateMenuItem=async(req,res)=>{
-   try {
-      const { id } = req.params;
-    const { name, description, price, category, isAvailable } = req.body;
+    res.status(201).json({
+      success: true,
+      message: "Order placed successfully",
+      order: newOrder,
+    });
+  } catch (error) {
+    console.log(error);
+    return res.json({ message: "Internal server error", success: false });
+  }
+};
 
-    const menuItem=await Menu.findById(id);
-      if (!menuItem)
-      return res
-        .status(404)
-        .json({ message: "Menu item not found", success: false });
+export const getUserOrders = async (req, res) => {
+  try {
+    const { id } = req.user;
+    const orders = await Order.find({ user: id }).sort({ createdAt: -1 });
+    res.status(200).json({ orders, success: true });
+  } catch (error) {
+    console.log(error);
+    return res.json({ message: "Internal server error", success: false });
+  }
+};
 
-        if(req.file){
-               const result=await cloudinary.uploader.upload(req.file.path);
-               menuItem.image=result.secure_url;
+export const getAllOrders = async (req, res) => {
+  try {
+    const orders = await Order.find()
+      .populate("user")
+      .populate("items.menuItem")
+      .sort({ createdAt: -1 });
+    res.status(200).json({ orders, success: true });
+  } catch (error) {
+    console.log(error);
+    return res.json({ message: "Internal server error", success: false });
+  }
+};
 
-      }
-       if (name) menuItem.name = name;
-    if (description) menuItem.description = description;
-    if (price) menuItem.price = price;
-    if (category) menuItem.category = category;
-      if (isAvailable !== undefined) menuItem.isAvailable = isAvailable;
+export const updateOrderStatus = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const { status } = req.body;
+    const order = await Order.findById(orderId);
+    if (!order) return res.status(404).json({ message: "Order not found" });
 
-      await menuItem.save();
-        res
-      .status(200)
-      .json({ message: "Menu item updated", success: true, menuItem });
-   } catch (error) {
-           console.log(error);
-             return res.json({message:"Internal server error",success:false})
-   }
-}
+    order.status = status;
+    await order.save();
 
-export const deleteMenuItem=async(req,res)=>{
-   try {
-      const {id}=req.params;
-      const menuItem=await Menu.findByIdAndDelete(id);
-       res.status(200).json({ success: true, message: "Menu item deleted" });
-   } catch (error) {
-        console.log(error);
-             return res.json({message:"Internal server error",success:false})
-   }
-}
+    res.json({ message: "order status updated", success: true });
+  } catch (error) {
+    console.log(error);
+    return res.json({ message: "Internal server error", success: false });
+  }
+};
